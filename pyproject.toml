@@ -53,6 +53,7 @@ enable = [
 [tool.pylint.design]
 # Frozen domain dataclasses and injected-dependency constructors are wide by design.
 max-args = 8
+max-positional-arguments = 8
 max-attributes = 15
 
 # --- Types: pyright --------------------------------------------------------

@@ -13,7 +13,13 @@ import re
 
 from intake.ids import CaseId, ClientId, EngagementId, MessageId, PrincipalId
 from intake.model import INTAKE_DECISION as _INTAKE_DECISION
-from intake.model import AuditDraft, AuditEvent, AuthorisationSnapshot, TriageItem
+from intake.model import (
+    AuditDraft,
+    AuditEvent,
+    AuthorisationSnapshot,
+    ClarificationTask,
+    TriageItem,
+)
 from intake.protocols import Clock, IdGenerator
 
 _CASE_ID_PATTERN = re.compile(r"^[A-Z]+-\d+$")
@@ -173,9 +179,26 @@ class InMemoryAuditLog:
             detail=draft.detail,
             case_id=draft.case_id,
             correlation_id=draft.correlation_id,
+            reviewer_id=draft.reviewer_id,
+            classification=draft.classification,
         )
         self._events.append(event)
         return event
+
+    def event_for(self, message_id: MessageId, action: str) -> AuditEvent | None:
+        """Return the most recent event for a message with the given action.
+
+        Args:
+            message_id: The message to look up.
+            action: The audit action name to match.
+
+        Returns:
+            The matching event, or ``None`` if there is none.
+        """
+        for event in reversed(self._events):
+            if event.action == action and event.message_id == message_id:
+                return event
+        return None
 
     def decision_for(self, message_id: MessageId) -> AuditEvent | None:
         """Return the most recent intake decision event for a message.
@@ -186,10 +209,7 @@ class InMemoryAuditLog:
         Returns:
             The decision event, or ``None`` if the message is unseen.
         """
-        for event in reversed(self._events):
-            if event.action == _INTAKE_DECISION and event.message_id == message_id:
-                return event
-        return None
+        return self.event_for(message_id, _INTAKE_DECISION)
 
     @property
     def events(self) -> tuple[AuditEvent, ...]:
@@ -242,3 +262,35 @@ class InMemoryTriageQueue:
             Items in insertion order.
         """
         return tuple(self._items)
+
+
+class InMemoryClarificationQueue:
+    """In-memory clarification queue, idempotent by message id."""
+
+    def __init__(self) -> None:
+        self._tasks: list[ClarificationTask] = []
+        self._seen: set[MessageId] = set()
+
+    def enqueue(self, task: ClarificationTask) -> ClarificationTask:
+        """Enqueue a clarification task idempotently by message id.
+
+        Args:
+            task: The clarification task to enqueue.
+
+        Returns:
+            The stored task (the existing one if already queued).
+        """
+        if task.message_id in self._seen:
+            return next(t for t in self._tasks if t.message_id == task.message_id)
+        self._seen.add(task.message_id)
+        self._tasks.append(task)
+        return task
+
+    @property
+    def items(self) -> tuple[ClarificationTask, ...]:
+        """Return all queued tasks.
+
+        Returns:
+            Tasks in insertion order.
+        """
+        return tuple(self._tasks)

@@ -14,7 +14,15 @@ import datetime as dt
 from typing import Protocol
 
 from intake.ids import CaseId, EngagementId, MessageId, PrincipalId
-from intake.model import AuditDraft, AuditEvent, AuthorisationSnapshot, TriageItem
+from intake.model import (
+    AuditDraft,
+    AuditEvent,
+    AuthorisationSnapshot,
+    ClarificationTask,
+    ClassificationProposal,
+    MessageProjection,
+    TriageItem,
+)
 
 
 class Clock(Protocol):
@@ -87,6 +95,18 @@ class AuditLog(Protocol):
         """
         ...
 
+    def event_for(self, message_id: MessageId, action: str) -> AuditEvent | None:
+        """Return the most recent event for a message with the given action.
+
+        Args:
+            message_id: The message to look up.
+            action: The audit action name to match.
+
+        Returns:
+            The matching event, or ``None`` if there is none.
+        """
+        ...
+
     def decision_for(self, message_id: MessageId) -> AuditEvent | None:
         """Return the recorded intake decision event for a message, if any.
 
@@ -139,5 +159,44 @@ class TriageQueue(Protocol):
 
         Returns:
             Items in insertion order.
+        """
+        ...
+
+
+class ClarificationQueue(Protocol):
+    """Queue of routine 'need more inputs' tasks (distinct from security triage)."""
+
+    def enqueue(self, task: ClarificationTask) -> ClarificationTask:
+        """Enqueue a clarification task idempotently by message id.
+
+        Args:
+            task: The clarification task to enqueue.
+
+        Returns:
+            The stored task (the existing one if already queued).
+        """
+        ...
+
+    @property
+    def items(self) -> tuple[ClarificationTask, ...]:
+        """Return all queued tasks.
+
+        Returns:
+            Tasks in insertion order.
+        """
+        ...
+
+
+class Classifier(Protocol):
+    """Proposes a route for a message. Advisory only — a human confirms it."""
+
+    def classify(self, projection: MessageProjection) -> ClassificationProposal:
+        """Propose a classification for a message projection.
+
+        Args:
+            projection: The minimum-necessary, sender-scoped message view.
+
+        Returns:
+            The proposed classification.
         """
         ...
