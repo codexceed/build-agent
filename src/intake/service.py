@@ -11,11 +11,10 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from intake.authorisation import evaluate_authorisation
+from intake.gate import authorise
 from intake.ids import CaseId, EngagementId
 from intake.model import (
     CASE_REGISTERED,
-    INTAKE_DECISION,
     AuditDraft,
     AuditEvent,
     AuthorisationDecision,
@@ -23,6 +22,7 @@ from intake.model import (
     IntakeMessage,
     ReasonCode,
     TriageItem,
+    intake_decision_draft,
 )
 from intake.protocols import AuditLog, CaseRegistry, Clock, IdGenerator, TriageQueue
 
@@ -112,19 +112,7 @@ class IntakeService:
 
         decision = self._decide(message)
         correlation_id = self._ids.new_id()
-        self._audit.append(
-            AuditDraft(
-                action=INTAKE_DECISION,
-                outcome=decision.kind.value,
-                subject_digest=message.body_digest,
-                message_id=message.message_id,
-                principal_id=message.principal_id,
-                reason=decision.reason,
-                detail=decision.detail,
-                case_id=decision.case_id,
-                correlation_id=correlation_id,
-            )
-        )
+        self._audit.append(intake_decision_draft(message, decision, correlation_id))
         if decision.kind is DecisionKind.TRIAGE and decision.reason is not None:
             self._triage.enqueue(
                 TriageItem(
@@ -155,7 +143,4 @@ class IntakeService:
             return AuthorisationDecision(
                 kind=DecisionKind.TRIAGE, reason=ReasonCode.AMBIGUOUS_CASE_REFERENCE
             )
-        snapshot = self._registry.authorisation_snapshot(
-            message.principal_id, claimed[0], self._clock.now()
-        )
-        return evaluate_authorisation(snapshot)
+        return authorise(self._registry, message.principal_id, claimed[0], self._clock.now())

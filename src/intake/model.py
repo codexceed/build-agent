@@ -15,6 +15,10 @@ from intake.ids import CaseId, ClientId, EngagementId, MessageId, PrincipalId
 # Audit action names, kept here (dependency-free) so the log and service agree.
 INTAKE_DECISION = "intake.decision"
 CASE_REGISTERED = "registry.case_registered"
+CLASSIFICATION_PROPOSED = "classification.proposed"
+CLASSIFICATION_CONFIRMED = "classification.confirmed"
+CLASSIFICATION_CORRECTED = "classification.corrected"
+FOLLOWUP_AUTH_CHECKED = "followup.authorisation_checked"
 
 
 class DecisionKind(enum.Enum):
@@ -30,6 +34,9 @@ class ReasonCode(enum.Enum):
     NOT_AUTHORISED = "not_authorised"
     NO_CASE_REFERENCE = "no_case_reference"
     AMBIGUOUS_CASE_REFERENCE = "ambiguous_case_reference"
+    MIXED_OR_FLAGGED = "mixed_or_flagged"
+    CLASSIFIER_ERROR = "classifier_error"
+    NO_CASE_SELECTED = "no_case_selected"
 
 
 class DenialDetail(enum.Enum):
@@ -105,6 +112,8 @@ class AuditDraft:
     detail: DenialDetail | None
     case_id: CaseId | None
     correlation_id: str
+    reviewer_id: str | None = None
+    classification: ClassificationPayload | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -127,6 +136,8 @@ class AuditEvent:
     detail: DenialDetail | None
     case_id: CaseId | None
     correlation_id: str
+    reviewer_id: str | None = None
+    classification: ClassificationPayload | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -138,3 +149,150 @@ class TriageItem:
     reason: ReasonCode
     claimed_case_ids: tuple[CaseId, ...]
     state: TriageState = TriageState.OPEN
+
+
+def intake_decision_draft(
+    message: IntakeMessage,
+    decision: AuthorisationDecision,
+    correlation_id: str,
+) -> AuditDraft:
+    """Build the ``intake.decision`` audit draft for an authorisation decision.
+
+    Shared by ingress (``IntakeService``) and follow-up classification so both
+    record the same audit shape.
+
+    Args:
+        message: The message being decided.
+        decision: The authorisation decision reached.
+        correlation_id: Correlation id tying related events together.
+
+    Returns:
+        An ``AuditDraft`` for the ``intake.decision`` action.
+    """
+    return AuditDraft(
+        action=INTAKE_DECISION,
+        outcome=decision.kind.value,
+        subject_digest=message.body_digest,
+        message_id=message.message_id,
+        principal_id=message.principal_id,
+        reason=decision.reason,
+        detail=decision.detail,
+        case_id=decision.case_id,
+        correlation_id=correlation_id,
+    )
+
+
+# --- Slice 2: classification ------------------------------------------------
+
+
+class ClassificationClass(enum.Enum):
+    """Top-level route a message is classified into."""
+
+    EXISTING_FOLLOWUP = "existing_followup"
+    RESPONSE = "response"
+    NEW_DELIVERABLE = "new_deliverable"
+
+
+class NewDeliverableSubtype(enum.Enum):
+    """The kind of new deliverable requested."""
+
+    DUE_DILIGENCE = "due_diligence"
+    SITE_SOURCING = "site_sourcing"
+    TEST_FIT = "test_fit"
+
+
+class MissingField(enum.Enum):
+    """A required input the message did not supply."""
+
+    SITE_GEOMETRY = "site_geometry"
+    JURISDICTION = "jurisdiction"
+    SEARCH_BOUNDARY = "search_boundary"
+    SELECTION_CRITERIA = "selection_criteria"
+    PROGRAMME = "programme"
+
+
+class ClassificationOutcome(enum.Enum):
+    """Final outcome of a human-confirmed classification."""
+
+    FOLLOWUP_AUTHORISED = "followup_authorised"
+    RESPONSE_READY = "response_ready"
+    AWAITING_INPUTS = "awaiting_inputs"
+    NEW_DELIVERABLE_READY = "new_deliverable_ready"
+    TRIAGE = "triage"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class EvidenceSpan:
+    """A character span into the original message text (offsets, not content)."""
+
+    start: int
+    end: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MessageProjection:
+    """The minimum-necessary view of a message handed to the classifier.
+
+    ``candidate_case_ids`` are pre-scoped to cases the authenticated sender is
+    authorised for, so the classifier never sees another engagement's cases.
+    """
+
+    message_id: MessageId
+    principal_id: PrincipalId
+    text: str
+    candidate_case_ids: tuple[CaseId, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ClassificationProposal:
+    """A model proposal. Advisory only — a human confirms the route.
+
+    ``confidence`` is recorded for offline calibration and has no control-flow
+    role. ``triage_reason``, when set, escalates mixed/safety-flagged mail to a
+    human rather than forcing one of the three classes.
+    """
+
+    route_class: ClassificationClass
+    subtype: NewDeliverableSubtype | None
+    confidence: float
+    evidence_spans: tuple[EvidenceSpan, ...]
+    candidate_case_ids: tuple[CaseId, ...]
+    missing_fields: tuple[MissingField, ...]
+    triage_reason: ReasonCode | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class HumanDecision:
+    """A reviewer's confirmation of the route, or an explicit triage.
+
+    ``triage=True`` overrides everything else. For an existing follow-up the
+    reviewer must set exactly one ``selected_case_id``.
+    """
+
+    reviewer_id: str
+    confirmed_class: ClassificationClass | None = None
+    confirmed_subtype: NewDeliverableSubtype | None = None
+    selected_case_id: CaseId | None = None
+    confirmed_missing_fields: tuple[MissingField, ...] = ()
+    triage: bool = False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ClassificationPayload:
+    """Typed audit payload for a classification event (never a free blob)."""
+
+    route_class: ClassificationClass | None
+    subtype: NewDeliverableSubtype | None
+    confidence: float | None
+    missing_fields: tuple[MissingField, ...] = ()
+    candidate_case_ids: tuple[CaseId, ...] = ()
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ClarificationTask:
+    """A routine request for missing inputs on a confirmed new deliverable."""
+
+    task_id: str
+    message_id: MessageId
+    subtype: NewDeliverableSubtype | None
+    missing_fields: tuple[MissingField, ...]
