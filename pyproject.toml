@@ -1,0 +1,70 @@
+[project]
+name = "intake"
+version = "0.0.0"
+description = "Agent-driven client-intake and evidence-production system for site work."
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["ruff>=0.15", "pylint>=4.0", "pyright>=1.1", "pytest>=9.0"]
+
+[tool.uv]
+package = false
+
+# --- Lint / format: ruff ---------------------------------------------------
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, isort, bugbear, pyupgrade, pydocstyle
+select = ["E", "F", "I", "B", "UP", "D"]
+# D107: Google style documents the constructor in the class docstring, not __init__.
+ignore = ["D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"] # tests don't need docstrings
+
+# --- Lint / docstrings: pylint --------------------------------------------
+[tool.pylint.main]
+load-plugins = ["pylint.extensions.docparams"]
+source-roots = ["src"]
+
+[tool.pylint.parameter_documentation]
+# Require documented params / returns / raises (Google style auto-detected)
+accept-no-param-doc = false
+accept-no-return-doc = false
+accept-no-raise-doc = false
+accept-no-yields-doc = false
+default-docstring-type = "google"
+
+[tool.pylint."messages control"]
+# Keep missing-docstring checks ON for modules, classes, and functions
+enable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+]
+
+[tool.pylint.design]
+# Frozen domain dataclasses and injected-dependency constructors are wide by design.
+max-args = 8
+max-attributes = 15
+
+# --- Types: pyright --------------------------------------------------------
+[tool.pyright]
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+include = ["src", "tests"]
+extraPaths = ["src"]
+
+# --- Tests: pytest ---------------------------------------------------------
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
