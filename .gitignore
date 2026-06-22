@@ -16,8 +16,5 @@ dist/
 .pyright/
 .mypy_cache/
 
-# uv
-uv.lock
-
 # OS / editor
 .DS_Store
