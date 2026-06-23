@@ -13,6 +13,12 @@ from __future__ import annotations
 import datetime as dt
 from typing import Protocol
 
+from intake.evidence_model import (
+    AdapterResult,
+    EvidenceQuery,
+    FindingsLedger,
+    SourceId,
+)
 from intake.ids import CaseId, EngagementId, MessageId, PrincipalId
 from intake.model import (
     AuditDraft,
@@ -77,6 +83,17 @@ class CaseRegistry(Protocol):
         Raises:
             KeyError: If the engagement is unknown.
             ValueError: If the case id is malformed or already registered.
+        """
+        ...
+
+    def engagement_for_case(self, case_id: CaseId) -> EngagementId | None:
+        """Return the engagement that owns a case, if registered.
+
+        Args:
+            case_id: The case to look up.
+
+        Returns:
+            The owning engagement id, or ``None`` if the case is unknown.
         """
         ...
 
@@ -198,5 +215,65 @@ class Classifier(Protocol):
 
         Returns:
             The proposed classification.
+        """
+        ...
+
+
+class SourceAdapter(Protocol):
+    """A single evidence source (planning/zoning, environmental, or utility/RTO)."""
+
+    @property
+    def source_id(self) -> SourceId:
+        """Return the source this adapter answers for.
+
+        Returns:
+            The adapter's ``SourceId``.
+        """
+        ...
+
+    def fetch(self, query: EvidenceQuery) -> AdapterResult:
+        """Fetch evidence for a validated query.
+
+        Args:
+            query: The fully validated evidence query.
+
+        Returns:
+            The raw adapter result (the service normalises it fail-closed).
+        """
+        ...
+
+
+class EvidenceStore(Protocol):
+    """Immutable store of findings ledgers, separate from the audit log."""
+
+    def save_ledger(self, ledger: FindingsLedger) -> FindingsLedger:
+        """Persist a findings ledger.
+
+        Args:
+            ledger: The ledger to persist.
+
+        Returns:
+            The persisted ledger.
+        """
+        ...
+
+    def ledger_for(self, case_id: CaseId, revision: int) -> FindingsLedger | None:
+        """Return the ledger for a case manifest revision, if any.
+
+        Args:
+            case_id: The case to look up.
+            revision: The manifest revision.
+
+        Returns:
+            The matching ledger, or ``None``.
+        """
+        ...
+
+    @property
+    def ledgers(self) -> tuple[FindingsLedger, ...]:
+        """Return all persisted ledgers.
+
+        Returns:
+            Ledgers in save order.
         """
         ...

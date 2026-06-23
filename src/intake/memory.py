@@ -11,6 +11,7 @@ import dataclasses
 import datetime as dt
 import re
 
+from intake.evidence_model import FindingsLedger
 from intake.ids import CaseId, ClientId, EngagementId, MessageId, PrincipalId
 from intake.model import INTAKE_DECISION as _INTAKE_DECISION
 from intake.model import (
@@ -114,6 +115,17 @@ class InMemoryCaseRegistry:
         if case_id in self._cases:
             raise ValueError(f"case already registered: {case_id!r}")
         self._cases[case_id] = engagement_id
+
+    def engagement_for_case(self, case_id: CaseId) -> EngagementId | None:
+        """Return the engagement that owns a case, if registered.
+
+        Args:
+            case_id: The case to look up.
+
+        Returns:
+            The owning engagement id, or ``None`` if the case is unknown.
+        """
+        return self._cases.get(case_id)
 
     def authorisation_snapshot(
         self, principal_id: PrincipalId, case_id: CaseId, as_of: dt.datetime
@@ -294,3 +306,46 @@ class InMemoryClarificationQueue:
             Tasks in insertion order.
         """
         return tuple(self._tasks)
+
+
+class InMemoryEvidenceStore:
+    """Append-only, in-memory store of findings ledgers."""
+
+    def __init__(self) -> None:
+        self._ledgers: list[FindingsLedger] = []
+
+    def save_ledger(self, ledger: FindingsLedger) -> FindingsLedger:
+        """Persist a findings ledger.
+
+        Args:
+            ledger: The ledger to persist.
+
+        Returns:
+            The persisted ledger.
+        """
+        self._ledgers.append(ledger)
+        return ledger
+
+    def ledger_for(self, case_id: CaseId, revision: int) -> FindingsLedger | None:
+        """Return the ledger for a case manifest revision, if any.
+
+        Args:
+            case_id: The case to look up.
+            revision: The manifest revision.
+
+        Returns:
+            The matching ledger, or ``None``.
+        """
+        for ledger in reversed(self._ledgers):
+            if ledger.case_id == case_id and ledger.manifest_revision == revision:
+                return ledger
+        return None
+
+    @property
+    def ledgers(self) -> tuple[FindingsLedger, ...]:
+        """Return all persisted ledgers.
+
+        Returns:
+            Ledgers in save order.
+        """
+        return tuple(self._ledgers)

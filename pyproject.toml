@@ -54,7 +54,7 @@ enable = [
 # Frozen domain dataclasses and injected-dependency constructors are wide by design.
 max-args = 8
 max-positional-arguments = 8
-max-attributes = 15
+max-attributes = 20
 
 # --- Types: pyright --------------------------------------------------------
 [tool.pyright]
