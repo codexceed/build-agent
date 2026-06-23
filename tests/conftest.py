@@ -9,11 +9,20 @@ from collections.abc import Callable
 import pytest
 
 from intake.classification import ClassificationService
+from intake.evidence import EvidenceService
+from intake.evidence_model import (
+    AdapterResult,
+    Coverage,
+    EvidenceQuery,
+    EvidenceStatus,
+    SourceId,
+)
 from intake.ids import CaseId, ClientId, EngagementId, PrincipalId
 from intake.memory import (
     InMemoryAuditLog,
     InMemoryCaseRegistry,
     InMemoryClarificationQueue,
+    InMemoryEvidenceStore,
     InMemoryTriageQueue,
 )
 from intake.model import ClassificationProposal, MessageProjection
@@ -64,6 +73,54 @@ class FakeClassifier:
             raise RuntimeError("classifier boom")
         assert self._proposal is not None
         return self._proposal
+
+
+class FakeAdapter:
+    """A source adapter returning a preset result, or raising on demand."""
+
+    def __init__(
+        self,
+        source_id: SourceId,
+        result: AdapterResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._source_id = source_id
+        self._result = result
+        self._error = error
+        self.calls = 0
+        self.query: EvidenceQuery | None = None
+
+    @property
+    def source_id(self) -> SourceId:
+        return self._source_id
+
+    def fetch(self, query: EvidenceQuery) -> AdapterResult:
+        self.calls += 1
+        self.query = query
+        if self._error is not None:
+            raise self._error
+        if self._result is not None:
+            return self._result
+        return AdapterResult(
+            source_id=self._source_id,
+            status=EvidenceStatus.NOT_FOUND,
+            coverage=Coverage.COMPLETE,
+            request=f"req:{self._source_id.value}",
+            raw="raw",
+            parser_version="v1",
+            crs=query.crs,
+        )
+
+
+@dataclasses.dataclass
+class EWorld:
+    """A preloaded registry plus a wired evidence service for tests."""
+
+    registry: InMemoryCaseRegistry
+    store: InMemoryEvidenceStore
+    clock: FixedClock
+    adapters: dict[SourceId, FakeAdapter]
+    service: EvidenceService
 
 
 @dataclasses.dataclass
@@ -148,5 +205,38 @@ def make_cworld() -> Callable[..., CWorld]:
             registry, audit, triage, clarifications, classifier, clock, ids
         )
         return CWorld(registry, audit, triage, clarifications, classifier, clock, service)
+
+    return _make
+
+
+@pytest.fixture
+def make_eworld() -> Callable[..., EWorld]:
+    """Return a factory building an evidence EWorld with three fake adapters.
+
+    The factory takes optional ``planning``, ``environmental``, and ``utility``
+    FakeAdapters; any omitted source defaults to a complete NOT_FOUND adapter.
+    Registry holds CASE-1 under engagement E (client C).
+    """
+
+    def _make(
+        planning: FakeAdapter | None = None,
+        environmental: FakeAdapter | None = None,
+        utility: FakeAdapter | None = None,
+    ) -> EWorld:
+        clock = FixedClock(BASE)
+        ids = SequentialIdGenerator()
+        registry = InMemoryCaseRegistry()
+        store = InMemoryEvidenceStore()
+        registry.add_client(ClientId("C"))
+        registry.add_engagement(EngagementId("E"), ClientId("C"))
+        registry.register_case(EngagementId("E"), CaseId("CASE-1"))
+        adapters = {
+            SourceId.PLANNING_ZONING: planning or FakeAdapter(SourceId.PLANNING_ZONING),
+            SourceId.ENVIRONMENTAL_REGISTRY: environmental
+            or FakeAdapter(SourceId.ENVIRONMENTAL_REGISTRY),
+            SourceId.UTILITY_RTO: utility or FakeAdapter(SourceId.UTILITY_RTO),
+        }
+        service = EvidenceService(registry, store, adapters, clock, ids)
+        return EWorld(registry, store, clock, adapters, service)
 
     return _make
